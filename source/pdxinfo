@@ -8,7 +8,7 @@ description=Spin to win
 bundleID=io.github.npexception.spincross-lua
 # The current version of your game. It is common to use the semantic version format here,
 # but it can just be anything. You could set your version to "Poopy Panda" if you're fancy.
-version=0.36
+version=Altered-Angus
 # Number of the current build. The sideloading mechanism via the Playdate website uses this to
 # know if this build of your app is newer than any previously uploaded builds. This is what
 # allows the Playdate to download updates without having to uninstall and reinstall the game.
