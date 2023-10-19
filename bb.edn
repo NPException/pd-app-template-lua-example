@@ -42,7 +42,7 @@
                                         ; `.pdx.zip` will be appended to its attachments.
                                         ; Any key from the pdxinfo file can be used as placeholder.
                                         ; (Another useful example is "v${version}_b${buildNumber}")
-                                        :tag  "v${version}"
+                                        :tag  "v${version}-b${buildNumber}"
                                         ; When a GitHub release is created, this will determine if the type of the release.
                                         ; Possible values are ["draft", "prerelease", "release"].
                                         ; "draft": Draft releases are only visible to the repo owner on GitHub.
@@ -54,7 +54,7 @@
                                         ;              with the same tag already exists, the release action will be skipped.
                                         ; (one possible approach is to set this to "release", and then only
                                         ;  increase the "version" in your pdxinfo once you want a release to happen)
-                                        :type "prerelease"}})
+                                        :type "release"}})
 
       ; validate automated-release type
       (let [accepted-release-types #{"draft" "prerelease" "release"}
