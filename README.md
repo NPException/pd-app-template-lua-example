@@ -14,7 +14,7 @@ and leave some love in the comments. :)
 
 ## Build and run in Playdate simulator
 
-With babashka and the Playdate SDK installed, run the following command:
+With [babashka](https://babashka.org/) and the Playdate SDK installed, run the following command in the project's directory:
 
 ```bash
 bb build-and-sim
