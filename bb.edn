@@ -1,0 +1,450 @@
+{:min-bb-version "1.3.185"
+ :tasks
+ {:requires ([clojure.string :as str]
+             [clojure.java.io :as io]
+             [babashka.fs :as fs])
+
+  ;; Script Initialization
+  :init
+  (do (def config {
+                   ; Name of the zip file when the `build-release` task is called.
+                   ; Any key from the pdxinfo file can be used as placeholder.
+                   :release-name       "${name} v${version}_b${buildNumber}"
+                   ; The location of the Playdate SDK. If this is empty, the build process
+                   ; will try to get the path from the `PLAYDATE_SDK_PATH` environment variable.
+                   :playdate-sdk-path  ""
+                   ; The location of the Fennel binary. If this is empty, the build process
+                   ; checks if `fennel` is available on the `PATH` environment variable.
+                   ; (Unused if no `.fnl` files are present.)
+                   :fennel-binary-path ""
+                   ; Possible directories where all code and assets are located.
+                   ; The first one that is found will be used.
+                   :sources            ["./src/" "./Source/" "./Sources/" "./source/" "./sources/"]
+                   ; Directory relative to `:sources` where Fennel macro modules are placed.
+                   ; Fennel files within this directory will not be compiled directly.
+                   ; (But other file types will still be copied to `:compiled-sources`. Unused if no `.fnl` files are present.)
+                   :fennel-macros      "macros/"
+                   ; Directory where the compiled Lua and other copied files will be put.
+                   ; This is then used as the input directory for the Playdate compiler.
+                   ; If there are no `.fnl` files this is unused and `pdc` uses `:sources` directly.
+                   :compiled-sources   "./compiled-source/"
+                   ; Lua file that is the program's entry point. (Note that a "main.fnl" file will
+                   ; be compiled to "main.lua". Due to how the Playdate compiler does things,
+                   ; this will have no effect if you set this to a different file but your source
+                   ; folder still contains a `main.lua` or `main.fnl` file.)
+                   :main-file          "main.lua"
+                   ; Directory where the Playdate compiler will output the final PDX app.
+                   :build-output       "./builds/"
+                   ; Options that will be used by the automated GitHub release action (unused otherwise)
+                   :automated-release  {
+                                        ; When a GitHub release is created, this will be used as the tag.
+                                        ; If a release with the same tag already exists, the newly built
+                                        ; `.pdx.zip` will be appended to its attachments.
+                                        ; Any key from the pdxinfo file can be used as placeholder.
+                                        ; (Another useful example is "v${version}_b${buildNumber}")
+                                        :tag  "v${version}"
+                                        ; When a GitHub release is created, this will determine if the type of the release.
+                                        ; Possible values are ["draft", "prerelease", "release"].
+                                        ; "draft": Draft releases are only visible to the repo owner on GitHub.
+                                        ;           An existing draft with the same tag will be updated.
+                                        ; "prerelease": Pre-releases are visible to anyone on your releases page.
+                                        ;                An existing pre-release with the same tag will be updated.
+                                        ; "releases": Releases are visible to anyone, with the latest release
+                                        ;              visible on your repo's main page. If a non-draft release
+                                        ;              with the same tag already exists, the release action will be skipped.
+                                        ; (one possible approach is to set this to "release", and then only
+                                        ;  increase the "version" in your pdxinfo once you want a release to happen)
+                                        :type "prerelease"}})
+
+      ; validate automated-release type
+      (let [accepted-release-types #{"draft" "prerelease" "release"}
+            release-type (-> config :automated-release :type)]
+        (when-not (accepted-release-types release-type)
+          (println (str "Invalid value " (pr-str release-type) " in " '(-> config :automated-release :type) ". Must be one of " (pr-str (vec accepted-release-types))))
+          (System/exit 1)))
+
+      ; detect the operating system, so it can be used where system specific code is necessary
+      (def OS (let [os-name (str/lower-case (System/getProperty "os.name"))]
+                (cond
+                  (str/includes? os-name "windows") :windows
+                  (str/includes? os-name "mac") :mac
+                  :else :linux)))
+
+      (def compiled-src-dir (fs/path (:compiled-sources config)))
+
+      ; Helper function. Takes a String that includes placeholders of the form `${key}`,
+      ; and replaces those with the value retrieved by passing the key to `mapping-fn`
+      (defn format-with [s mapping-fn]
+        (str/replace s
+          (re-pattern "\\$\\{([^\\}]+)\\}")
+          (fn [[full-match key]]
+            ; put the placeholder back in if `mapping-fn` returns nil
+            (if-some [val (mapping-fn key)]
+              (str val)
+              (str "${" key "}"))))))
+
+
+  ;; Available Babashka Tasks
+
+  -src-dir
+  {:task (let [dir (->> (:sources config)
+                     (map fs/path)
+                     (map fs/canonicalize)
+                     ; pick the first directory from `:sources` that exists
+                     (filter fs/directory?)
+                     first)]
+           (when-not dir
+             (println (str "No source directory found."))
+             (System/exit 1))
+           (def src-dir dir))}
+
+
+  -macros-dir
+  {:depends [-src-dir]
+   :task    (def macros-dir (fs/path src-dir (:fennel-macros config)))}
+
+
+  -pdx-info-path
+  {:depends [-src-dir]
+   :task    (def pdxinfo-path (fs/path src-dir "pdxinfo"))}
+
+
+  print-pdxinfo-path
+  {:doc     "Prints the path of the pdxinfo file"
+   :depends [-pdx-info-path]
+   :task    (print (str (fs/relativize (fs/cwd) pdxinfo-path)))}
+
+
+  -pdxinfo
+  {:doc     "Prepares reading from and writing to the pdxinfo file"
+   :depends [-pdx-info-path]
+   :task    (let [pdx-info-text (String. (fs/read-all-bytes pdxinfo-path))
+                  newline-regex (or (re-pattern "\r?\n") "\n")
+                  newline (re-find newline-regex pdx-info-text)
+                  pdxinfo-lines (atom (->> (clojure.string/split pdx-info-text newline-regex -1)
+                                        (mapv (fn [line]
+                                                (if (or (str/blank? line) (str/starts-with? line "#"))
+                                                  line
+                                                  (str/split line (re-pattern "=") 2))))))]
+
+              ; function to read a value from the pdxinfo file
+              (defn pdxinfo [key]
+                (let [value (->> (deref pdxinfo-lines)
+                              (filter (fn [[k v]] (= k key)))
+                              first
+                              second)]
+                  (when-not value
+                    (println (str "Tried to read `" key "` from pdxinfo file, but they key is missing in the file."))
+                    (System/exit 1))
+                  value))
+
+              ; function to change a value
+              (defn pdxinfo-set! [key value]
+                (assert (string? value))
+                ; first set the new value in memory
+                (->> (swap! pdxinfo-lines
+                       (fn [lines]
+                         (mapv (fn [[k _ :as line]]
+                                 (if (= key k)
+                                   [key value]
+                                   line))
+                           lines)))
+                  ; store the new lines to the file
+                  (map (fn [line]
+                         (if (vector? line)
+                           (str (first line) "=" (second line))
+                           line)))
+                  (str/join newline)
+                  (.getBytes)
+                  (fs/write-bytes pdxinfo-path))))}
+
+
+  pdxinfo
+  {:doc     "Takes one argument. Prints out the value of the pdxinfo file for the given key."
+   :depends [-pdxinfo]
+   :task    (print (pdxinfo (first *command-line-args*)))}
+
+
+  -pdx-name
+  {:depends [-pdxinfo]
+   :task    (def pdx-name (str (pdxinfo "bundleID") ".pdx"))}
+
+
+  clean-compiled
+  {:doc  "Deletes the directory generated via the `compile` task."
+   :task (when (fs/exists? compiled-src-dir)
+           (println (str "Deleting `" compiled-src-dir "`"))
+           (fs/delete-tree compiled-src-dir))}
+
+
+  -fennel-project?
+  {:doc     "Walk the directory. When finding a fennel file, checks if the `fennel` command exists."
+   :depends [-src-dir -macros-dir]
+   :task    (do (defn fennel-file? [path]
+                  (= "fnl" (fs/extension path)))
+                (def fennel-project? false)
+                (let [has-macros-dir? (fs/directory? macros-dir)]
+                  (fs/walk-file-tree src-dir
+                    {:pre-visit-dir
+                     (fn [path attrs]
+                       ; we don't care about .fnl files within the macros directory, since those aren't compiled anyway
+                       (if (and has-macros-dir? (fs/same-file? macros-dir path))
+                         :skip-subtree
+                         :continue))
+                     :visit-file
+                     (fn [path attrs]
+                       (if-not (fennel-file? path)
+                         :continue
+                         (do (def fennel-project? true)     ; yucky reassignment, but it works nicely
+                             :terminate)))})))}
+
+
+  fennel?
+  {:doc     "Prints `true` or `false` depending on if this project contains .fnl files."
+   :depends [-fennel-project?]
+   :task    (print fennel-project?)}
+
+
+  -fennel-binary
+  {:depends [-fennel-project?]
+   :task    (when fennel-project?
+              (let [fennel-path (or (some-> (:fennel-binary-path config) (not-empty) (fs/path) (fs/canonicalize))
+                                  (fs/which "fennel"))]
+                (when-not fennel-path
+                  (println "No Fennel binary specified. Either add a path to the binary under the config key `:fennel-binary-path`, or make sure that a `fennel` executable is available on your PATH.\nIf you don't have Fennel yet, you can get the binary at https://fennel-lang.org/setup#downloading-a-fennel-binary")
+                  (System/exit 1))
+                (def fennel-binary-path fennel-path)))}
+
+
+  compile
+  {:doc     "Compiles all Fennel files using `fennel` and copies all other files to the `:compiled-sources` directory. Does nothing if there are no `.fnl` files in the project."
+   :depends [clean-compiled -fennel-binary]
+   :task    (when fennel-project?
+              (println "Compiling Fennel")
+              (fs/create-dirs compiled-src-dir)
+              (fs/walk-file-tree src-dir
+                {:visit-file
+                 (fn [path attrs]
+                   (let [rel-path-str (str (fs/relativize src-dir path))]
+                     (if (fennel-file? path)
+                       ; compile fennel file to lua, but ignore macro files
+                       (if (fs/starts-with? path macros-dir)
+                         :continue
+                         (let [compiled-lua (:out (shell
+                                                    {:dir src-dir, :out :string}
+                                                    (str fennel-binary-path) "--compile" rel-path-str))]
+                           (if-not compiled-lua
+                             :terminate
+                             (let [[path-without-extension] (fs/split-ext rel-path-str)
+                                   lua-file (fs/path compiled-src-dir (str path-without-extension ".lua"))]
+                               (fs/create-dirs (fs/parent lua-file))
+                               (fs/write-bytes lua-file (.getBytes (str compiled-lua)))
+                               :continue))))
+                       ; copy any non-fennel files
+                       (let [target-path (fs/path compiled-src-dir rel-path-str)]
+                         (fs/create-dirs (fs/parent target-path))
+                         (fs/copy path target-path {:replace-existing true})
+                         :continue))))}))}
+
+
+  -build-path
+  {:task (do (def build-path (fs/path (:build-output config)))
+             (when-not (fs/exists? build-path)
+               (fs/create-dirs build-path)))}
+
+
+  -pdx-output-path
+  {:depends [-build-path -pdx-name]
+   :task    (def pdx-output-path (str (fs/canonicalize (fs/path build-path pdx-name))))}
+
+
+  clean
+  {:doc     "Removes the PDX build output directory"
+   :depends [-pdx-output-path]
+   :task    (when (fs/exists? pdx-output-path)
+              (println (str "Deleting `" (str (fs/relativize (fs/cwd) pdx-output-path)) "`"))
+              (fs/delete-tree pdx-output-path))}
+
+
+  -pd-sdk
+  {:doc  "Checks if the Playdate SDK path is known"
+   :task (let [sdk-dir (or (not-empty (:playdate-sdk-path config))
+                         (not-empty (System/getenv "PLAYDATE_SDK_PATH")))]
+           (when-not sdk-dir
+             (println "Playdate SDK path not specified. Either set the path to it in the `:playdate-sdk-path` config value, or add its path as the `PLAYDATE_SDK_PATH` environment variable.\nIf you don't have the Playdate SDK yet, you can get it at https://play.date/dev/")
+             (System/exit 1))
+           (def pd-sdk-path (fs/canonicalize (fs/path sdk-dir))))}
+
+
+  create-pdx
+  {:doc     "Builds all files in the `:compiled-sources` directory into a Playdate PDX app."
+   :depends [clean -fennel-project? -pd-sdk]
+   :enter   (println "Building PDX app")
+   :task    (shell
+              {:dir (if fennel-project?
+                      compiled-src-dir
+                      src-dir)}
+              (str (fs/path pd-sdk-path "bin/pdc")) "-m" (:main-file config) pdx-output-path)}
+
+
+  -file-utils
+  {:task (do (defn all-files
+               "Function to return a sequence of all files in a directory tree"
+               [directory-path]
+               (let [dirs (loop [processed []
+                                 unprocessed [directory-path]]
+                            (if (empty? unprocessed)
+                              processed
+                              (recur
+                                (concat processed unprocessed)
+                                (fs/list-dirs unprocessed fs/directory?))))]
+                 (fs/list-dirs dirs fs/regular-file?)))
+
+             (defn md5-dir
+               "Creates an md5 hash for an entire folder structure"
+               [path]
+               (let [files (sort (all-files path))
+                     ;; this part is to catch file names and directory structure in the hash
+                     structure-stream (->> files
+                                        (map (partial fs/relativize path))
+                                        (mapv str)
+                                        (pr-str)
+                                        (.getBytes)
+                                        (java.io.ByteArrayInputStream.))
+                     files-input-streams (->> files
+                                           (map fs/file)
+                                           (map io/input-stream)
+                                           (into [structure-stream]))
+                     digest (java.security.MessageDigest/getInstance "MD5")]
+                 (with-open [input-stream (java.io.SequenceInputStream. (java.util.Collections/enumeration files-input-streams))
+                             digest-stream (java.security.DigestInputStream. input-stream digest)
+                             output-stream (java.io.OutputStream/nullOutputStream)]
+                   (io/copy digest-stream output-stream))
+                 (format "%032x" (BigInteger. 1 (.digest digest))))))}
+
+
+  -last-build-file
+  {:depends [-build-path]
+   :task    (def last-build-file (fs/path build-path "last-build-hash"))}
+
+
+  -bump-build-nr
+  {:doc     "Increments the `buildNumber` in the pdxinfo file if files in `:sources` have changed."
+   :depends [-pdxinfo -last-build-file -file-utils -src-dir]
+   :enter   (println "Checking if files changed")
+   :task    (let [last-hash (when (fs/exists? (fs/file last-build-file))
+                              (str/trim (slurp (fs/file last-build-file))))
+                  current-hash (md5-dir src-dir)]
+              (println "  previous build hash:" last-hash)
+              (println "  current source hash:" current-hash)
+              (when-not (= last-hash current-hash)
+                (println "Incrementing `buildNumber` in pdxinfo")
+                (let [build-nr (parse-long (pdxinfo "buildNumber"))]
+                  (pdxinfo-set! "buildNumber" (str (inc build-nr))))
+                ; hash again (since pdxinfo changed) and store hash to disk
+                (fs/write-lines last-build-file [(md5-dir src-dir)])))}
+
+
+  build
+  {:doc     "Compiles Fennel (if necessary) and builds everything into a Playdate PDX app."
+   :depends [compile create-pdx]}
+
+
+  copy-pdx-to-sim
+  {:doc     "Copies the PDX app to the Playdate simulator's games directory, so it can be selected in the simulator's menu."
+   :depends [-pdx-output-path -pd-sdk]
+   :enter   (println "Copying app to simulator")
+   :task    (let [target-path (fs/path pd-sdk-path "Disk/Games/User/" pdx-name)] ; TODO: check if this path works the same under Linux
+              (fs/delete-tree target-path)
+              (fs/copy-tree pdx-output-path target-path))}
+
+
+  start-sim
+  {:doc     "Starts the Playdate simulator with the PDX app in the build output directory"
+   :depends [-pdx-output-path -pd-sdk]
+   :enter   (println "Starting Playdate Simulator")
+   :task    (let [sim-path (str (fs/path pd-sdk-path "bin/PlaydateSimulator"))] ; TODO: check if this path works the same under Linux
+              (shell sim-path pdx-output-path))}
+
+
+  build-and-sim
+  {:doc     "Calls the `build` task and then starts the Playdate simulator."
+   :depends [build start-sim]}
+
+
+  build-copy-sim
+  {:doc     "Calls the `build` and `copy-pdx-to-sim` tasks, then starts the Playdate Simulator."
+   :depends [build copy-pdx-to-sim start-sim]}
+
+
+  -format-with-pdxinfo
+  {:depends [-pdxinfo]
+   :task    (defn format-with-pdxinfo [s]
+              (format-with s pdxinfo))}
+
+
+  release-name
+  {:doc     "Prints the name the release would have with the current pdxinfo data."
+   :depends [-format-with-pdxinfo]
+   :task    (print (format-with-pdxinfo (:release-name config)))}
+
+
+  automated-release
+  {:doc     "Prints a given option from the :automated-release config category"
+   :depends [-format-with-pdxinfo]
+   :task    (let [key (keyword (first *command-line-args*))
+                  option (-> config :automated-release key)
+                  formatted (if (string? option)
+                              (format-with-pdxinfo option)
+                              option)]
+              (print formatted))}
+
+
+  -current-release-path
+  {:depends [-build-path -format-with-pdxinfo]
+   :task    (defn current-release-path []
+              (fs/path build-path (format-with-pdxinfo (str (:release-name config) ".pdx.zip"))))}
+
+
+  release-path
+  {:doc     "Prints the path the release .pdx.zip file would have with the current pdxinfo data."
+   :depends [-current-release-path]
+   :task    (print (str (current-release-path)))}
+
+
+  build-release
+  {:doc     "Increments the `buildNumber` in pdxinfo (if sources changes since last release), calls `build` and puts the resulting PDX app in a zip."
+   :depends [-build-path -file-utils -current-release-path -bump-build-nr build]
+   :task    (let [pdx-path (fs/path build-path pdx-name)
+                  entries (all-files pdx-path)
+                  zip-path (current-release-path)]
+              (println "Creating game release:" (str zip-path))
+              ; NOTE: For some reason babashka will create an empty file in the zip alongside each folder if I just pass in the root folder I want to zip up
+              (fs/zip zip-path entries
+                ; store paths relative to builds folder
+                {:path-fn (fn [path]
+                            (str (fs/relativize build-path path)))}))}
+
+  }}
+
+; License: MIT License
+;
+; Copyright (c) 2023 Dirk Wetzel
+;
+; Permission is hereby granted, free of charge, to any person obtaining a copy
+; of this software and associated documentation files (the "Software"), to deal
+; in the Software without restriction, including without limitation the rights
+; to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+; copies of the Software, and to permit persons to whom the Software is
+; furnished to do so, subject to the following conditions:
+;
+; The above copyright notice and this permission notice shall be included in all
+; copies or substantial portions of the Software.
+;
+; THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+; IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+; FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+; AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+; LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+; OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+; SOFTWARE.

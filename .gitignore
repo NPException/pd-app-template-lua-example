@@ -1,0 +1,12 @@
+*.iml
+.idea/
+.sentry-native/
+# default directory used to create the pdx app in
+builds/
+# default directory where compiled fennel files will be put
+compiled-source/
+# directory used by `pd-rs/get-playdate-sdk` GitHub action to download the Playdate SDK in
+_pd-sdk/
+# only keep track of .vscode/tasks.json
+.vscode/
+!.vscode/tasks.json

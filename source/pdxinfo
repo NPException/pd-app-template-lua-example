@@ -1,0 +1,24 @@
+# For details on every possible key in this file see https://sdk.play.date/2.0.3/Inside%20Playdate.html#pdxinfo
+name=My Game
+author=Game Developer
+description=A small Playdate game which doesn't have any code yet.
+# A unique identifier for your game. Try to use reverse domain notation here.
+# If you don't own a domain you could use as a prefix,
+# one idea is to use your GitHub username like so: io.github.your-username.my-game
+bundleID=com.example.my-game
+# The current version of your game. It is common to use the semantic version format here,
+# but it can just be anything. You could set your version to "Poopy Panda" if you're fancy.
+version=0.0.1
+# Number of the current build. The sideloading mechanism via the Playdate website uses this to
+# know if this build of your app is newer than any previously uploaded builds. This is what
+# allows the Playdate to download updates without having to uninstall and reinstall the game.
+buildNumber=0
+# Path to various images and animations related to the game's presentation in the menu.
+# (at minimum, all games should include card.png, icon.png and a launchImage.png which will be displayed as the system loads the game)
+imagePath=system_assets
+# Sound that should be playing a launch animation from the `[imagePath]/launchImages` runs.
+# Note that the sound will only be playing for as long as the animation runs (@20fps).
+launchSoundPath=system_assets/intro
+# Content warnings will be displayed before launching the game the first time
+contentWarning=This game contains mild realistic violence and bloodshed.
+contentWarning2=This game contains flashing content that may not be suitable for photosensitive epilepsy.
