@@ -12,7 +12,7 @@ version=Altered-Angus
 # Number of the current build. The sideloading mechanism via the Playdate website uses this to
 # know if this build of your app is newer than any previously uploaded builds. This is what
 # allows the Playdate to download updates without having to uninstall and reinstall the game.
-buildNumber=0
+buildNumber=1
 # Path to various images and animations related to the game's presentation in the menu.
 # (at minimum, all games should include card.png, icon.png and a launchImage.png which will be displayed as the system loads the game)
 imagePath=system_assets
