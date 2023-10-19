@@ -22,7 +22,7 @@ bb build-and-sim
 
 ## Releases
 
-The most recent automated release [can be found here](https://github.com/NPException/playdate-app-template/releases).
+The most recent automated release [can be found here](https://github.com/NPException/pd-app-template-lua-example/releases).
 
 ## Differences
 

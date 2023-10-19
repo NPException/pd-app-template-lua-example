@@ -134,7 +134,7 @@ jobs:
         if: steps.init-check.outputs.run == 'true' && success()
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
-          commit_message: prepare release `v${{steps.build-release.outputs.version}} b${{steps.build-release.outputs.build-nr}}`
+          commit_message: prepare release `${{steps.build-release.outputs.version}} b${{steps.build-release.outputs.build-nr}}`
           file_pattern: ${{ steps.build-release.outputs.pdxinfo-path }}
 
       - name: Locate latest commit

@@ -9,7 +9,7 @@
   (do (def config {
                    ; Name of the zip file when the `build-release` task is called.
                    ; Any key from the pdxinfo file can be used as placeholder.
-                   :release-name       "${name} v${version}_b${buildNumber}"
+                   :release-name       "${name} (${version} b${buildNumber})"
                    ; The location of the Playdate SDK. If this is empty, the build process
                    ; will try to get the path from the `PLAYDATE_SDK_PATH` environment variable.
                    :playdate-sdk-path  ""
@@ -42,7 +42,7 @@
                                         ; `.pdx.zip` will be appended to its attachments.
                                         ; Any key from the pdxinfo file can be used as placeholder.
                                         ; (Another useful example is "v${version}_b${buildNumber}")
-                                        :tag  "v${version}-b${buildNumber}"
+                                        :tag  "${version}-b${buildNumber}"
                                         ; When a GitHub release is created, this will determine if the type of the release.
                                         ; Possible values are ["draft", "prerelease", "release"].
                                         ; "draft": Draft releases are only visible to the repo owner on GitHub.
