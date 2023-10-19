@@ -1,276 +1,254 @@
--- open cmd and enter the following command to build
--- [windows] start C:\Users\PC\Documents\PlaydateSDK\bin\pdc.exe -sdkpath C:\Users\PC\Documents\PlaydateSDK C:\Users\PC\Documents\SpinCrossRedux C:\Users\PC\Documents\PlaydateSDK\Disk\Games\SpinCrossRedux.pdx
--- [linux] game="SpinCross" && pdc -sdkpath ../PlaydateSDK "./Source/" "../PlaydateSDK/Disk/Games/$game.pdx"
+-- based on original Spin Cross source code (© James Morwood), with permission from the author
+-- get the original game here: https://jctwizard.itch.io/spincross
 
 import 'CoreLibs/graphics'
 
-screenWidth = playdate.display.getWidth()
-screenHeight = playdate.display.getHeight()
+import 'SDK_PATCHES'
 
-matchAngle = 0
-badAngle = 180
+-- TODO: switch rendering to sprites in an effort to reduce render times
 
-score = 0
-bestScore = 0
+local pd <const> = playdate
+local gfx <const> = pd.graphics
+local math <const> = math
+local tostring <const> = tostring
 
-crankAngle = playdate.getCrankPosition() - 90
-prevCrankAngle = crankAngle
-crossDir = 1
-prevCrossAngle = 0
-dead = false
-deadAngle = 0
+local debug = false
 
-refreshRate = 60
-dt = 1.0 / refreshRate
+pd.getSystemMenu():addCheckmarkMenuItem("Debug", debug, function(d)
+  debug = d
+end)
 
-crossSpeed = 0.1 * (180 / math.pi)
+local screenWidth = pd.display.getWidth()
+local screenHeight = pd.display.getHeight()
 
-circleSize = 100
-circleStroke = 2
-playerSize = 110
-playerDotSize = 5
-dotSize = 7
-crossSize = 7
-crossStroke = 4
+local goalAngle = 0
+local crossAngle = 180
 
-initialPlayerSize = playerSize
-initialCrossSize = crossSize
-initialMatchAngle = matchAngle
-initialBadAngle = badAngle
+local score = 0
+local bestScore = 0
 
-af = playdate.geometry.affineTransform.new()
+local crankAngle = pd.getCrankPosition() - 90
 
-n2fnt = playdate.graphics.font.new('fonts/Nontendo-Bold-2x');
-nfnt = playdate.graphics.font.new('fonts/Nontendo-Bold');
+local prevCrankAngle = crankAngle
+local crossDir = 1
+local prevCrossAngle = 0
+local dead = false
+local deadAngle = 0
 
-playdate.display.setRefreshRate(refreshRate)
+local crossSpeed = 0.1 * (180 / math.pi)
 
-playdate.graphics.setLineWidth(2)
+local circleSize = 100
+local circleStroke = 2
+local playerSize = 110
+local playerDotSize = 5
+local dotSize = 7
+local crossSize = 7
+local crossStroke = 4
 
-function playdate.gameWillTerminate()
-	if (score > bestScore) 
-	then
-		bestScore = score
-		saveScore()
-	end
+local initialPlayerSize = playerSize
+local initialCrossSize = crossSize
+
+local af = pd.geometry.affineTransform.new()
+
+local n2fnt = gfx.font.new('fonts/Nontendo-Bold-2x');
+local nfnt = gfx.font.new('fonts/Nontendo-Bold');
+
+pd.display.setRefreshRate(0)
+pd.display.setInverted(true)
+
+pd.getSystemMenu():addCheckmarkMenuItem("Inverted", true, pd.display.setInverted)
+
+gfx.setLineWidth(2)
+
+local function loadScore()
+  if pd.file.exists("score.txt") then
+    local scoreFile = pd.file.open("score.txt", pd.file.kFileRead)
+    bestScore = tonumber(scoreFile:readline(), 10)
+    scoreFile:close()
+  end
 end
 
-function playdate.deviceWillSleep()
-	if (score > bestScore) 
-	then
-		bestScore = score
-		saveScore()
-	end
+local function saveScore()
+  local scoreFile = pd.file.open("score.txt", pd.file.kFileWrite)
+  scoreFile:write(tostring(bestScore))
+  scoreFile:close()
 end
 
-function playdate.update()
-	-- convert crank angle to radians
-	handleInput()
-
-	if (dead == false) 
-	then
-		prevCrossAngle = badAngle
-		badAngle = badAngle + crossDir * dt * (crossSpeed * score)
-	else
-		crossSize = crossSize + dt * 5
-		playerSize = playerSize - dt * initialPlayerSize / 1.5
-
-		if (playerSize < 0) 
-		then
-			dead = false
-			crossSize = initialCrossSize
-			playerSize = initialPlayerSize
-			badAngle = initialBadAngle
-			matchAngle = initialMatchAngle
-			prevCrossAngle = badAngle
-
-			if (score > bestScore) 
-			then
-				bestScore = score
-				saveScore()
-			end
-
-			score = 0
-		end
-	end
-
-	if angleBetween(badAngle, prevCrankAngle, crankAngle) or angleBetween(crankAngle, badAngle, prevCrossAngle) or (angleBetween(badAngle, prevCrankAngle, crankAngle) and angleBetween(prevCrossAngle, prevCrankAngle, crankAngle)) or (angleBetween(crankAngle, badAngle, prevCrossAngle) and angleBetween(prevCrankAngle, badAngle, prevCrossAngle))
-	then
-		dead = true
-		deadAngle = badAngle
-	end
-
-	if dead == false and angleBetween(matchAngle, prevCrankAngle, crankAngle) 
-	then
-		matchAngle = crankAngle + 180 / 4 + math.random() * 180 * 1.5
-		score = score + 1
-		
-		if (math.random() > 0.5) 
-		then
-			crossDir = 1
-		else
-			crossDir = -1
-		end
-	end
-
-	clr();
-
-	blk();
-
-	fr(-screenWidth / 2, -screenHeight / 2, screenWidth, screenHeight)
-
-	wht();
-
-	txt(tostring(score), screenWidth / 2, 50, n2fnt)
-	txt(tostring(bestScore), screenWidth / 2, 70, nfnt)
-
-	c(0, 0, circleSize)
-
-	rot(matchAngle)
-
-	fc(circleSize, 0, dotSize)
-
-	rot(-matchAngle)
-
-	rot(badAngle)
-
-	playdate.graphics.setLineWidth(crossStroke)
-	l(circleSize - crossSize, 0 + crossSize, circleSize + crossSize, 0 - crossSize)
-	l(circleSize - crossSize, 0 - crossSize, circleSize + crossSize, 0 + crossSize)
-	playdate.graphics.setLineWidth(circleStroke)
-
-	rot(-badAngle)
-
-	if (dead == false) 
-	then
-		rot(crankAngle)
-
-		dl(0, 0, playerSize, 0, 2)
-		c(0, 0, playerDotSize)
-
-		rot(-crankAngle)
-	else
-		rot(deadAngle)
-
-		dl(0, 0, playerSize, 0, 2)
-		c(0, 0, playerDotSize)
-
-		rot(-deadAngle)
-	end
-
-	prevCrankAngle = crankAngle
-
-	af:reset()
+function pd.gameWillTerminate()
+  if score > bestScore then
+    bestScore = score
+    saveScore()
+  end
 end
 
-function angleBetween(n,a,b)
-	tau = 360
-
-	a = (tau+a%tau)%tau
-	b = (tau+b%tau)%tau
-	n = (tau+n%tau)%tau
-
-	if ((tau+(b-a)%tau)%tau > 180) 
-	then
-		ta=a
-		a=b
-		b=ta
-	end
-
-	na = n-a
-	na = (tau+na%tau)%tau
-	ba = b-a
-	ba = (tau+ba%tau)%tau
-
-	return na < ba and (na-ba) < 180
+function pd.deviceWillSleep()
+  if score > bestScore then
+    bestScore = score
+    saveScore()
+  end
 end
 
-function blk()
-	playdate.graphics.setColor(playdate.graphics.kColorBlack)
+local function drawLine(x, y, x2, y2)
+  x, y = af:transformXY(x, y)
+  x2, y2 = af:transformXY(x2, y2)
+  gfx.drawLine(x + screenWidth / 2, y + screenHeight / 2, x2 + screenWidth / 2, y2 + screenHeight / 2)
 end
 
-function wht()
-	playdate.graphics.setColor(playdate.graphics.kColorWhite)
+local function drawDashedLine(x, y, x2, y2, dashLength)
+  local lineLength = math.sqrt(math.pow(x2 - x, 2) + math.pow(y2 - y, 2))
+  local dashCount = lineLength / (dashLength * 2)
+  local dx, dy = (x2 - x) / dashCount, (y2 - y) / dashCount
+
+  for dash = 0, dashCount / 2, 1 do
+    drawLine(x + dx * (dash * 2), y + dy * (dash * 2), x + dx * (dash * 2 + 1), y + dy * (dash * 2 + 1))
+  end
 end
 
-function clr()
-	playdate.graphics.clear()
+local function angleBetween(n, a, b)
+  local tau = 360
+
+  a = (tau + a % tau) % tau
+  b = (tau + b % tau) % tau
+  n = (tau + n % tau) % tau
+
+  if (tau + (b - a) % tau) % tau > 180 then
+    ta = a
+    a = b
+    b = ta
+  end
+
+  local na = (tau + (n - a) % tau) % tau
+  local ba = (tau + (b - a) % tau) % tau
+
+  return na < ba and (na - ba) < 180
 end
 
-function txt(text, x, y, fnt)
-	playdate.graphics.setFont(fnt)
-	playdate.graphics.setImageDrawMode(playdate.graphics.kDrawModeFillWhite)
-	local w, h = playdate.graphics.getTextSize(text)
-	playdate.graphics.drawText(text, x - w / 2, y - h / 2);
+local function drawText(text, x, y, fnt)
+  gfx.setFont(fnt)
+  gfx.setImageDrawMode(gfx.kDrawModeNXOR)
+  local w, h = gfx.getTextSize(text)
+  gfx.drawText(text, x - w / 2, y - h / 2);
 end
 
-function c(x,y,r)
-	x, y = af:transformXY(x,y)
-	playdate.graphics.drawCircleAtPoint(x + screenWidth / 2, y + screenHeight / 2, r)
+local function drawCircle(x, y, r)
+  x, y = af:transformXY(x, y)
+  gfx.drawCircleAtPoint(x + screenWidth / 2, y + screenHeight / 2, r)
 end
 
-function fc(x,y,r)
-	x, y = af:transformXY(x,y)
-	playdate.graphics.fillCircleAtPoint(x + screenWidth / 2, y + screenHeight / 2, r)
+local function fillCircle(x, y, r)
+  x, y = af:transformXY(x, y)
+  gfx.fillCircleAtPoint(x + screenWidth / 2, y + screenHeight / 2, r)
 end
 
-function r(x,y,w,h)
-	x, y = af:transformXY(x,y)
-	w, h = af:transformXY(w,h)
-	playdate.graphics.drawRect(x + screenWidth / 2, y + screenHeight / 2, w, h)
+-- draws the current state of the game
+local function drawGame()
+  -- TODO: find way to avoid full screen clear (sprites?)
+  gfx.clear()
+
+  drawText(tostring(score), screenWidth / 2, 50, n2fnt)
+  drawText(tostring(bestScore), screenWidth / 2, 70, nfnt)
+
+  drawCircle(0, 0, circleSize)
+
+  af:rotate(goalAngle)
+
+  -- TODO: find way to avoid drawing the entire large circle every time. This would improve the framerate once the full-screen clear is solved
+  fillCircle(circleSize, 0, dotSize)
+
+  af:rotate(-goalAngle)
+
+  af:rotate(crossAngle)
+
+  gfx.setLineWidth(crossStroke)
+  drawLine(circleSize - crossSize, 0 + crossSize, circleSize + crossSize, 0 - crossSize)
+  drawLine(circleSize - crossSize, 0 - crossSize, circleSize + crossSize, 0 + crossSize)
+  gfx.setLineWidth(circleStroke)
+
+  af:rotate(-crossAngle)
+
+  if not dead then
+    af:rotate(crankAngle)
+
+    drawDashedLine(0, 0, playerSize, 0, 2)
+    drawCircle(0, 0, playerDotSize)
+
+    af:rotate(-crankAngle)
+  else
+    af:rotate(deadAngle)
+
+    drawDashedLine(0, 0, playerSize, 0, 2)
+    drawCircle(0, 0, playerDotSize)
+
+    af:rotate(-deadAngle)
+  end
+
+  af:reset()
 end
 
-function fr(x,y,w,h)
-	x, y = af:transformXY(x,y)
-	w, h = af:transformXY(w,h)
-	playdate.graphics.fillRect(x + screenWidth / 2, y + screenHeight / 2, w, h)
-end
+local lastTime = pd.getElapsedTime()
 
-function l(x,y,x2,y2)
-	x, y = af:transformXY(x,y)
-	x2, y2 = af:transformXY(x2,y2)
-	playdate.graphics.drawLine(x + screenWidth / 2, y + screenHeight / 2, x2 + screenWidth / 2, y2 + screenHeight / 2)
-end
+-- main update
+function pd.update()
+  local currentTime = pd.getElapsedTime()
+  local dt = currentTime - lastTime
+  lastTime = currentTime
+  -- convert crank angle to radians
+  crankAngle = pd.getCrankPosition() - 90
 
-function dl(x,y,x2,y2,dashLength)
-	lineLength=math.sqrt(math.pow(x2-x,2)+math.pow(y2-y,2))
-	dashCount=lineLength/(dashLength*2)
-	dx,dy=(x2-x)/dashCount,(y2-y)/dashCount
-	
-	for dash=0,dashCount/2,1 do
-		l(x+dx*(dash*2),y+dy*(dash*2),x+dx*(dash*2+1),y+dy*(dash*2+1))
-	end
-end
+  if not dead then
+    prevCrossAngle = crossAngle
+    crossAngle = crossAngle + crossDir * dt * (crossSpeed * score)
+  else
+    -- TODO: try to move death animation (and draw calls) to separate function, work with coroutine.yield() to walk through the steps
+    -- death animation
+    crossSize = crossSize + dt * 5
+    playerSize = playerSize - dt * initialPlayerSize / 1.5
 
-function mov(x,y)
-	af:translate(x,y)
-end
+    -- reset after animation finishes
+    if playerSize < 0 then
+      dead = false
+      crossSize = initialCrossSize
+      playerSize = initialPlayerSize
+      crossAngle = (crankAngle - 90) % 360 -- position cross 90° counter clockwise
+      goalAngle = (crankAngle + 90) % 360 -- position goal 90° clockwise
+      prevCrossAngle = crossAngle
 
-function rot(a)
-	af:rotate(a)
-end
+      if score > bestScore then
+        bestScore = score
+        saveScore()
+      end
 
-function scale(x, y)
-	af:scale(x, y)
-end
+      score = 0
+    end
+  end
 
-function handleInput()
-	crankAngle = playdate.getCrankPosition() - 90
-end
+  -- TODO: switch to a (hopefully) simpler approach. Try to just check if the segment prevCrankAngle->crankAngle and prevCrossAngle->crossAngle overlap
+  if angleBetween(crossAngle, prevCrankAngle, crankAngle)
+      or angleBetween(crankAngle, crossAngle, prevCrossAngle)
+      or (angleBetween(crossAngle, prevCrankAngle, crankAngle) and angleBetween(prevCrossAngle, prevCrankAngle, crankAngle))
+      or (angleBetween(crankAngle, crossAngle, prevCrossAngle) and angleBetween(prevCrankAngle, crossAngle, prevCrossAngle)) then
+    dead = true
+    deadAngle = crossAngle
+  end
 
-function loadScore()
-	if (playdate.file.exists("score.txt")) 
-	then
-		scoreFile = playdate.file.open("score.txt", playdate.file.kFileRead)
-		bestScore=tonumber(scoreFile:readline(),10)
-		scoreFile:close()
-	end
-end
+  if not dead and angleBetween(goalAngle, prevCrankAngle, crankAngle) then
+    goalAngle = crankAngle + 180 / 4 + math.random() * 180 * 1.5
+    score = score + 1
 
-function saveScore()
-	scoreFile = playdate.file.open("score.txt", playdate.file.kFileWrite)
-	scoreFile:write(tostring(bestScore))
-	scoreFile:close()
+    if math.random() > 0.5 then
+      crossDir = 1
+    else
+      crossDir = -1
+    end
+  end
+
+  drawGame()
+
+  prevCrankAngle = crankAngle
+
+  if debug then
+    pd.drawFPS(0, 0)
+  end
 end
 
 -- start up logic
