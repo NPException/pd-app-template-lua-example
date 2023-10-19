@@ -6,6 +6,8 @@ with a game written in Lua.
 
 # A fan copy of [Spin Cross](https://jctwizard.itch.io/spincross)
 
+![Spin Cross Fan Edit logo](source/system_assets/card.gif)
+
 This game is a slightly modified version of jctwizard's amazing game Spin Cross.
 Go get the original on its official [itch.io page](https://jctwizard.itch.io/spincross)
 and leave some love in the comments. :)
