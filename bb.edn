@@ -38,10 +38,11 @@
                    ; Options that will be used by the automated GitHub release action (unused otherwise)
                    :automated-release  {
                                         ; When a GitHub release is created, this will be used as the tag.
+                                        ; (the tag name will be cleaned up if necessary to conform to git tag name restrictions)
                                         ; If a release with the same tag already exists, the newly built
                                         ; `.pdx.zip` will be appended to its attachments.
                                         ; Any key from the pdxinfo file can be used as placeholder.
-                                        ; (Another useful example is "v${version}_b${buildNumber}")
+                                        ; (Another useful example is "v${version}-b${buildNumber}")
                                         :tag  "${version}-b${buildNumber}"
                                         ; When a GitHub release is created, this will determine if the type of the release.
                                         ; Possible values are ["draft", "prerelease", "release"].
@@ -383,23 +384,6 @@
               (format-with s pdxinfo))}
 
 
-  release-name
-  {:doc     "Prints the name the release would have with the current pdxinfo data."
-   :depends [-format-with-pdxinfo]
-   :task    (print (format-with-pdxinfo (:release-name config)))}
-
-
-  automated-release
-  {:doc     "Prints a given option from the :automated-release config category"
-   :depends [-format-with-pdxinfo]
-   :task    (let [key (keyword (first *command-line-args*))
-                  option (-> config :automated-release key)
-                  formatted (if (string? option)
-                              (format-with-pdxinfo option)
-                              option)]
-              (print formatted))}
-
-
   -current-release-path
   {:depends [-build-path -format-with-pdxinfo]
    :task    (defn current-release-path []
@@ -424,6 +408,39 @@
                 ; store paths relative to builds folder
                 {:path-fn (fn [path]
                             (str (fs/relativize build-path path)))}))}
+
+
+  release-name
+  {:doc     "Prints the name the release would have with the current pdxinfo data."
+   :depends [-format-with-pdxinfo]
+   :task    (print (format-with-pdxinfo (:release-name config)))}
+
+
+  automated-release
+  {:doc     "Prints a given option from the :automated-release config category"
+   :depends [-format-with-pdxinfo]
+   :task    (let [key (keyword (first *command-line-args*))
+                  option (-> config :automated-release key)
+                  formatted (if-not (string? option)
+                              option
+                              (cond-> (format-with-pdxinfo option)
+                                ; ensure the tag conforms to git limitations for tag-names
+                                (= key :tag)
+                                (->
+                                  ; Tags are not case sensitive.
+                                  (str/lower-case)
+                                  ; They cannot contain a space.
+                                  (str/replace \space \-)
+                                  ; They cannot contain any of the following characters \ ? ~ ^ : * [ @
+                                  (str/replace (re-pattern "[\\\\?~^:*\\[@]") "_")
+                                  ; Tags cannot begin or end with, or contain multiple consecutive `/` characters.
+                                  (str/replace (re-pattern "^/") "")
+                                  (str/replace (re-pattern "/$") "_")
+                                  (str/replace (re-pattern "//+") "/")
+                                  ; They cannot end with a . or have two consecutive .. anywhere within them.
+                                  (str/replace (re-pattern "\\.\\.+") ".")
+                                  (str/replace (re-pattern "\\.$") "_"))))]
+              (print formatted))}
 
   }}
 
