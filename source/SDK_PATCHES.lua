@@ -14,7 +14,7 @@ end
 if playdate.timer then
   printFix("Pausing a Timer doesn't work properly")
   function playdate.timer:start()
-    self._lastTime = nil
+    self._lastTime = playdate.getCurrentTimeMilliseconds()
     self.paused = false
   end
 end
