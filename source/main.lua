@@ -3,12 +3,15 @@
 
 import 'CoreLibs/graphics'
 
+import 'drawing'
+
 import 'SDK_PATCHES'
 
 local pd <const> = playdate
 local gfx <const> = pd.graphics
 local math <const> = math
-local tostring <const> = tostring
+
+local draw <const> = draw
 
 local debug = false
 
@@ -86,22 +89,6 @@ function pd.deviceWillSleep()
   end
 end
 
-local function drawLine(x, y, x2, y2)
-  x, y = af:transformXY(x, y)
-  x2, y2 = af:transformXY(x2, y2)
-  gfx.drawLine(x + screenWidth / 2, y + screenHeight / 2, x2 + screenWidth / 2, y2 + screenHeight / 2)
-end
-
-local function drawDashedLine(x, y, x2, y2, dashLength)
-  local lineLength = math.sqrt(math.pow(x2 - x, 2) + math.pow(y2 - y, 2))
-  local dashCount = lineLength / (dashLength * 2)
-  local dx, dy = (x2 - x) / dashCount, (y2 - y) / dashCount
-
-  for dash = 0, dashCount / 2, 1 do
-    drawLine(x + dx * (dash * 2), y + dy * (dash * 2), x + dx * (dash * 2 + 1), y + dy * (dash * 2 + 1))
-  end
-end
-
 local function angleBetween(n, a, b)
   local tau = 360
 
@@ -121,71 +108,50 @@ local function angleBetween(n, a, b)
   return na < ba and (na - ba) < 180
 end
 
-local function drawText(text, x, y, fnt, clear)
-  gfx.setFont(fnt)
-  gfx.setImageDrawMode(gfx.kDrawModeNXOR)
-  local w, h = gfx.getTextSize(text)
-  if clear then
-    gfx.fillRect(x - w / 2, y - h / 2, w, h)
-  else
-    gfx.drawText(text, x - w / 2, y - h / 2);
-  end
-end
-
-local function drawCircle(x, y, r)
-  x, y = af:transformXY(x, y)
-  gfx.drawCircleAtPoint(x + screenWidth / 2, y + screenHeight / 2, r)
-end
-
-local function fillCircle(x, y, r)
-  x, y = af:transformXY(x, y)
-  gfx.fillCircleAtPoint(x + screenWidth / 2, y + screenHeight / 2, r)
-end
-
 -- draws the current state of the game
 local function drawGame(shouldClear)
   gfx.setColor(shouldClear and gfx.kColorWhite or gfx.kColorBlack)
 
+  -- large outer ring
   if not shouldClear then
     -- TODO: find way to avoid drawing the entire large circle every time. Maybe only redraw the circle regions that have been cleared
-    drawCircle(0, 0, circleSize)
+    draw.circle(af, 0, 0, circleSize)
   end
 
+  -- target circle on the ring
   af:rotate(goalAngle)
+  draw.fillCircle(af, circleSize, 0, dotSize)
+  af:reset()
 
-  fillCircle(circleSize, 0, dotSize)
-
-  af:rotate(-goalAngle)
-
+  -- enemy cross
   af:rotate(crossAngle)
-
   gfx.setLineWidth(crossStroke)
-  drawLine(circleSize - crossSize, 0 + crossSize, circleSize + crossSize, 0 - crossSize)
-  drawLine(circleSize - crossSize, 0 - crossSize, circleSize + crossSize, 0 + crossSize)
+  draw.line(af, circleSize - crossSize, 0 + crossSize, circleSize + crossSize, 0 - crossSize)
+  draw.line(af, circleSize - crossSize, 0 - crossSize, circleSize + crossSize, 0 + crossSize)
   gfx.setLineWidth(circleStroke)
+  af:reset()
 
-  af:rotate(-crossAngle)
-
+  -- player position
+  -- TODO: merge both branches and just rotate on a ternary: dead and deadAngle or crankAngle
   if not dead then
     af:rotate(crankAngle)
 
-    drawDashedLine(0, 0, playerSize, 0, 2)
-    drawCircle(0, 0, playerDotSize)
+    draw.dashedLine(af, 0, 0, playerSize, 0, 2)
+    draw.circle(af, 0, 0, playerDotSize)
 
-    af:rotate(-crankAngle)
+    af:reset()
   else
     af:rotate(deadAngle)
 
-    drawDashedLine(0, 0, playerSize, 0, 2)
-    drawCircle(0, 0, playerDotSize)
+    draw.dashedLine(af, 0, 0, playerSize, 0, 2)
+    draw.circle(af, 0, 0, playerDotSize)
 
-    af:rotate(-deadAngle)
+    af:reset()
   end
 
-  af:reset()
-
-  drawText(tostring(score), screenWidth / 2, 50, n2fnt, shouldClear)
-  drawText(tostring(bestScore), screenWidth / 2, 70, nfnt, shouldClear)
+  -- score display
+  draw.text(tostring(score), screenWidth / 2, 50, n2fnt, shouldClear)
+  draw.text(tostring(bestScore), screenWidth / 2, 70, nfnt, shouldClear)
 end
 
 local function drawGameGraphics()
