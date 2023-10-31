@@ -22,29 +22,27 @@ end)
 local screenWidth = pd.display.getWidth()
 local screenHeight = pd.display.getHeight()
 
-local goalAngle = 0
-local crossAngle = 180
-
 local score = 0
 local bestScore = 0
 
-local crankAngle = pd.getCrankPosition() - 90
+local goalAngle = 0
 
-local prevCrankAngle = crankAngle
-local crossDir = 1
+local crossAngle = 180
 local prevCrossAngle = 0
-local dead = false
-local deadAngle = 0
-
+local crossDir = 1
 local crossSpeed = 0.1 * (180 / math.pi)
 
-local circleSize = 100
-local circleStroke = 2
+local crankAngle = 0
+local prevCrankAngle = 0
+
+local ringRadius <const> = 100
+local ringStrokeWidth = 2
 local playerSize = 110
 local playerDotSize = 5
+local playerStrokeWidth = 2
 local dotSize = 7
 local crossSize = 7
-local crossStroke = 4
+local crossStrokeWidth = 4
 
 local initialPlayerSize = playerSize
 local initialCrossSize = crossSize
@@ -59,7 +57,19 @@ pd.display.setInverted(true)
 
 pd.getSystemMenu():addCheckmarkMenuItem("Inverted", true, pd.display.setInverted)
 
-gfx.setLineWidth(2)
+local function resetGameState()
+  score = 0
+  crankAngle = pd.getCrankPosition() - 90
+  prevCrankAngle = crankAngle
+  crossSize = initialCrossSize
+  playerSize = initialPlayerSize
+  crossAngle = (crankAngle - 90) % 360 -- position cross 90° counter clockwise
+  prevCrossAngle = crossAngle
+  goalAngle = (crankAngle + 90) % 360 -- position goal 90° clockwise
+end
+
+-- initialize game state
+resetGameState()
 
 local function loadScore()
   if pd.file.exists("score.txt") then
@@ -115,42 +125,32 @@ end
 local function drawGame(shouldClear)
   gfx.setColor(shouldClear and gfx.kColorWhite or gfx.kColorBlack)
 
+
   -- large outer ring
   if not shouldClear then
     -- TODO: find way to avoid drawing the entire large circle every time. Maybe only redraw the circle regions that have been cleared
-    draw.circle(af, 0, 0, circleSize)
+    gfx.setLineWidth(ringStrokeWidth)
+    draw.circle(af, 0, 0, ringRadius)
   end
 
   -- target circle on the ring
   af:rotate(goalAngle)
-  draw.fillCircle(af, circleSize, 0, dotSize)
+  draw.fillCircle(af, ringRadius, 0, dotSize)
   af:reset()
 
   -- enemy cross
   af:rotate(crossAngle)
-  gfx.setLineWidth(crossStroke)
-  draw.line(af, circleSize - crossSize, 0 + crossSize, circleSize + crossSize, 0 - crossSize)
-  draw.line(af, circleSize - crossSize, 0 - crossSize, circleSize + crossSize, 0 + crossSize)
-  gfx.setLineWidth(circleStroke)
+  gfx.setLineWidth(crossStrokeWidth)
+  draw.line(af, ringRadius - crossSize, 0 + crossSize, ringRadius + crossSize, 0 - crossSize)
+  draw.line(af, ringRadius - crossSize, 0 - crossSize, ringRadius + crossSize, 0 + crossSize)
   af:reset()
 
-  -- player position
-  -- TODO: merge both branches and just rotate on a ternary: dead and deadAngle or crankAngle
-  if not dead then
-    af:rotate(crankAngle)
-
-    draw.dashedLine(af, 0, 0, playerSize, 0, 2)
-    draw.circle(af, 0, 0, playerDotSize)
-
-    af:reset()
-  else
-    af:rotate(deadAngle)
-
-    draw.dashedLine(af, 0, 0, playerSize, 0, 2)
-    draw.circle(af, 0, 0, playerDotSize)
-
-    af:reset()
-  end
+  -- player line
+  af:rotate(crankAngle)
+  gfx.setLineWidth(playerStrokeWidth)
+  draw.dashedLine(af, 0, 0, playerSize, 0, 2)
+  draw.circle(af, 0, 0, playerDotSize)
+  af:reset()
 
   -- score display
   draw.text(tostring(score), screenWidth / 2, 50, n2fnt, shouldClear)
@@ -166,13 +166,20 @@ local function clearGameGraphics()
 end
 
 local lastTime = nil
+-- returns time in seconds since last call of this function
+local function deltaTime()
+  local currentTime = pd.getElapsedTime()
+  local dt = currentTime - (lastTime or currentTime)
+  lastTime = currentTime
+  return dt
+end
 
 local function deathAnimation()
+  -- fix player position on cross
+  crankAngle = crossAngle
+
   while playerSize > 0 do
-    -- update delta time
-    local currentTime = pd.getElapsedTime()
-    local dt = currentTime - lastTime
-    lastTime = currentTime
+    local dt = deltaTime()
     -- grow cross
     crossSize = crossSize + dt * 5
     -- shrink player line
@@ -185,54 +192,34 @@ local function deathAnimation()
     clearGameGraphics()
   end
 
-  -- reset after animation finishes
-  dead = false
-  crossSize = initialCrossSize
-  playerSize = initialPlayerSize
-  crossAngle = (crankAngle - 90) % 360 -- position cross 90° counter clockwise
-  goalAngle = (crankAngle + 90) % 360 -- position goal 90° clockwise
-  prevCrossAngle = crossAngle
-
   if score > bestScore then
     bestScore = score
     saveScore()
   end
 
-  score = 0
+  resetGameState()
 end
 
 -- main update
 function pd.update()
-  if lastTime == nil then
-    -- don't clear on first update call (since we haven't drawn anything yet that needs clearing)
-    lastTime = pd.getElapsedTime()
-  else
-    clearGameGraphics()
-  end
+  clearGameGraphics()
 
-  local currentTime = pd.getElapsedTime()
-  local dt = currentTime - lastTime
-  lastTime = currentTime
+  local dt = deltaTime()
   -- convert crank angle to radians
   crankAngle = pd.getCrankPosition() - 90
 
-  if dead then
-    deathAnimation()
-  else
-    prevCrossAngle = crossAngle
-    crossAngle = crossAngle + crossDir * dt * (crossSpeed * score)
-  end
+  prevCrossAngle = crossAngle
+  crossAngle = crossAngle + crossDir * dt * (crossSpeed * score)
 
   -- TODO: switch to a (hopefully) simpler approach. Try to just check if the segment prevCrankAngle->crankAngle and prevCrossAngle->crossAngle overlap
   if angleBetween(crossAngle, prevCrankAngle, crankAngle)
       or angleBetween(crankAngle, crossAngle, prevCrossAngle)
       or (angleBetween(crossAngle, prevCrankAngle, crankAngle) and angleBetween(prevCrossAngle, prevCrankAngle, crankAngle))
       or (angleBetween(crankAngle, crossAngle, prevCrossAngle) and angleBetween(prevCrankAngle, crossAngle, prevCrossAngle)) then
-    dead = true
-    deadAngle = crossAngle
+    deathAnimation()
   end
 
-  if not dead and angleBetween(goalAngle, prevCrankAngle, crankAngle) then
+  if angleBetween(goalAngle, prevCrankAngle, crankAngle) then
     goalAngle = crankAngle + 180 / 4 + math.random() * 180 * 1.5
     score = score + 1
 
