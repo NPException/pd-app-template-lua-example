@@ -69,6 +69,9 @@ local function loadScore()
   end
 end
 
+-- initialize highscore on game startup
+loadScore()
+
 local function saveScore()
   local scoreFile = pd.file.open("score.txt", pd.file.kFileWrite)
   scoreFile:write(tostring(bestScore))
@@ -164,6 +167,40 @@ end
 
 local lastTime = nil
 
+local function deathAnimation()
+  while playerSize > 0 do
+    -- update delta time
+    local currentTime = pd.getElapsedTime()
+    local dt = currentTime - lastTime
+    lastTime = currentTime
+    -- grow cross
+    crossSize = crossSize + dt * 5
+    -- shrink player line
+    playerSize = playerSize - dt * initialPlayerSize / 1.5
+    -- draw screen
+    drawGameGraphics()
+    -- yield to playdate OS update loop
+    coroutine.yield()
+    -- clear screen
+    clearGameGraphics()
+  end
+
+  -- reset after animation finishes
+  dead = false
+  crossSize = initialCrossSize
+  playerSize = initialPlayerSize
+  crossAngle = (crankAngle - 90) % 360 -- position cross 90° counter clockwise
+  goalAngle = (crankAngle + 90) % 360 -- position goal 90° clockwise
+  prevCrossAngle = crossAngle
+
+  if score > bestScore then
+    bestScore = score
+    saveScore()
+  end
+
+  score = 0
+end
+
 -- main update
 function pd.update()
   if lastTime == nil then
@@ -179,31 +216,11 @@ function pd.update()
   -- convert crank angle to radians
   crankAngle = pd.getCrankPosition() - 90
 
-  if not dead then
+  if dead then
+    deathAnimation()
+  else
     prevCrossAngle = crossAngle
     crossAngle = crossAngle + crossDir * dt * (crossSpeed * score)
-  else
-    -- TODO: try to move death animation (and draw calls) to separate function, work with coroutine.yield() to walk through the steps
-    -- death animation
-    crossSize = crossSize + dt * 5
-    playerSize = playerSize - dt * initialPlayerSize / 1.5
-
-    -- reset after animation finishes
-    if playerSize < 0 then
-      dead = false
-      crossSize = initialCrossSize
-      playerSize = initialPlayerSize
-      crossAngle = (crankAngle - 90) % 360 -- position cross 90° counter clockwise
-      goalAngle = (crankAngle + 90) % 360 -- position goal 90° clockwise
-      prevCrossAngle = crossAngle
-
-      if score > bestScore then
-        bestScore = score
-        saveScore()
-      end
-
-      score = 0
-    end
   end
 
   -- TODO: switch to a (hopefully) simpler approach. Try to just check if the segment prevCrankAngle->crankAngle and prevCrossAngle->crossAngle overlap
@@ -234,6 +251,3 @@ function pd.update()
     pd.drawFPS(0, 0)
   end
 end
-
--- start up logic
-loadScore()
