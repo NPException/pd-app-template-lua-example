@@ -5,8 +5,6 @@ import 'CoreLibs/graphics'
 
 import 'SDK_PATCHES'
 
--- TODO: switch rendering to sprites in an effort to reduce render times
-
 local pd <const> = playdate
 local gfx <const> = pd.graphics
 local math <const> = math
@@ -123,11 +121,15 @@ local function angleBetween(n, a, b)
   return na < ba and (na - ba) < 180
 end
 
-local function drawText(text, x, y, fnt)
+local function drawText(text, x, y, fnt, clear)
   gfx.setFont(fnt)
   gfx.setImageDrawMode(gfx.kDrawModeNXOR)
   local w, h = gfx.getTextSize(text)
-  gfx.drawText(text, x - w / 2, y - h / 2);
+  if clear then
+    gfx.fillRect(x - w / 2, y - h / 2, w, h)
+  else
+    gfx.drawText(text, x - w / 2, y - h / 2);
+  end
 end
 
 local function drawCircle(x, y, r)
@@ -141,18 +143,16 @@ local function fillCircle(x, y, r)
 end
 
 -- draws the current state of the game
-local function drawGame()
-  -- TODO: find way to avoid full screen clear (sprites?)
-  gfx.clear()
+local function drawGame(shouldClear)
+  gfx.setColor(shouldClear and gfx.kColorWhite or gfx.kColorBlack)
 
-  drawText(tostring(score), screenWidth / 2, 50, n2fnt)
-  drawText(tostring(bestScore), screenWidth / 2, 70, nfnt)
-
-  drawCircle(0, 0, circleSize)
+  if not shouldClear then
+    -- TODO: find way to avoid drawing the entire large circle every time. Maybe only redraw the circle regions that have been cleared
+    drawCircle(0, 0, circleSize)
+  end
 
   af:rotate(goalAngle)
 
-  -- TODO: find way to avoid drawing the entire large circle every time. This would improve the framerate once the full-screen clear is solved
   fillCircle(circleSize, 0, dotSize)
 
   af:rotate(-goalAngle)
@@ -183,12 +183,30 @@ local function drawGame()
   end
 
   af:reset()
+
+  drawText(tostring(score), screenWidth / 2, 50, n2fnt, shouldClear)
+  drawText(tostring(bestScore), screenWidth / 2, 70, nfnt, shouldClear)
 end
 
-local lastTime = pd.getElapsedTime()
+local function drawGameGraphics()
+  drawGame(false)
+end
+
+local function clearGameGraphics()
+  drawGame(true)
+end
+
+local lastTime = nil
 
 -- main update
 function pd.update()
+  if lastTime == nil then
+    -- don't clear on first update call (since we haven't drawn anything yet that needs clearing)
+    lastTime = pd.getElapsedTime()
+  else
+    clearGameGraphics()
+  end
+
   local currentTime = pd.getElapsedTime()
   local dt = currentTime - lastTime
   lastTime = currentTime
@@ -242,7 +260,7 @@ function pd.update()
     end
   end
 
-  drawGame()
+  drawGameGraphics()
 
   prevCrankAngle = crankAngle
 
