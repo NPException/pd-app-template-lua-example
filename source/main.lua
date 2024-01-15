@@ -13,12 +13,6 @@ local math <const> = math
 
 local draw <const> = draw
 
-local debug = false
-
-pd.getSystemMenu():addCheckmarkMenuItem("Debug", debug, function(d)
-  debug = d
-end)
-
 local screenWidth = pd.display.getWidth()
 local screenHeight = pd.display.getHeight()
 
@@ -52,9 +46,15 @@ local af = pd.geometry.affineTransform.new()
 local n2fnt = gfx.font.new('fonts/Nontendo-Bold-2x');
 local nfnt = gfx.font.new('fonts/Nontendo-Bold');
 
-pd.display.setRefreshRate(0)
-pd.display.setInverted(true)
+local debug = false
+pd.getSystemMenu():addCheckmarkMenuItem("Debug", debug, function(d)
+  debug = d
+end)
 
+pd.display.setRefreshRate(0)
+
+-- TODO: store `inverted` value between sessions
+pd.display.setInverted(true)
 pd.getSystemMenu():addCheckmarkMenuItem("Inverted", true, pd.display.setInverted)
 
 local function resetGameState()
@@ -200,6 +200,7 @@ local function deathAnimation()
   resetGameState()
 end
 
+-- TODO: add sounds
 -- main update
 function pd.update()
   clearGameGraphics()
@@ -233,6 +234,8 @@ function pd.update()
   drawGameGraphics()
 
   prevCrankAngle = crankAngle
+
+  -- TODO pause and show crank indicator while crank is docked
 
   if debug then
     pd.drawFPS(0, 0)
